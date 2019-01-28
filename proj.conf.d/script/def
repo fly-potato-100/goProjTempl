@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# 只有该项目目录是绝对路径，其他所有路径均为项目根目录的相对路径
+export PROJ_DIR
+
+# 项目配置根目录
+export PROJ_CONF_DIR
+
+# 该项目的GOPATH等
+export LOCAL_GOPATH="$PROJ_DIR:$PROJ_DIR/vendor"
+export LOCAL_GOBIN="$PROJ_DIR/bin"
+
+# 全部的编译配置文件
+export PROJ_CONF_PATH=$PROJ_CONF_DIR/config.ini
+
+# 打印的log输出路径
+export OUTPUT_PATH=.output.log
+
+# 颜色
+export CL_RED="\033[0;31m"
+export CL_GREEN="\033[0;32m"
+export CL_YELLOW="\033[0;33m"
+export CL_BLUE="\033[0;34m"
+export CL_PURPLE="\033[0;35m"
+export CL_NONE="\033[0;00m"

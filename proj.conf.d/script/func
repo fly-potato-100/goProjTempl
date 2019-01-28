@@ -1,0 +1,130 @@
+#!/bin/bash
+
+### 获取当前时间（年:月:日 时:分:秒.毫秒）
+function getNowMS()
+{
+	local now_s=`date "+%F %T"`
+	local now_ms=`expr \`date +%N\` / 1000000`
+	local now_ms_f=`printf "%.3d" "$now_ms"`
+	local now="$now_s.$now_ms_f"
+	echo $now
+}
+
+### 带颜色打印
+function echo_color()
+{
+	local color=$1
+	shift
+	local msg="$*"
+	printf "$color"
+	printf "$msg"
+	printf "$CL_NONE"
+}
+
+### 剪掉文件中的颜色字段
+function strip_file_color()
+{
+	local file=$1
+	sed 's/\o33\[.;..m//g' -i $file
+}
+
+### 打印log
+function log()
+{
+	local level=$1
+	local msg=$2
+	local date=`getNowMS`
+	if [ "$level" == "FATAL" ]; then
+		# 致命错误打完log强制退出
+		echo -e "===> [$date] `echo_color $CL_PURPLE FATAL`: $msg"
+		exit 1
+	elif [ "$level" == "ERROR" ]; then
+		# ERROR同时写入output.log中
+		echo -e "===> [$date] `echo_color $CL_RED ERROR`: $msg" | tee -a $OUTPUT_PATH
+		strip_file_color $OUTPUT_PATH
+	elif [ "$level" == "INFO" ]; then
+		# INFO同时写入output.log中
+		echo -e "===> [$date]  `echo_color $CL_GREEN INFO`: $msg" | tee -a $OUTPUT_PATH
+		strip_file_color $OUTPUT_PATH
+	else
+		echo -e "===> [$date] `echo_color $CL_BLUE UNKNOWN`: $msg"
+	fi
+}
+
+### 清空output目录
+function clearLog()
+{
+	rm -rf $OUTPUT_PATH
+}
+
+### 读取ini文件中，特定section的特定key字段值
+function readIni()
+{
+	local file=$1
+	local section=$2
+	local key=$3
+	local line=$(sed -n '/\['$section'\]/,/^$/p' $file | grep "^\s*\<$key\>\s*=\s*" | head -1)	# 获取section中的该行文本，如果有多行，以第一行为准
+	local val=$(echo $line | sed -n 's/^\s*\<'$key'\>\s*=\s*//p' | sed -n 's/\s*$//p')	# 把开头的key=部分切掉，把行尾空格切掉，留下value部分
+	local val_without_quote=$(echo $val | sed 's/^"//' | sed 's/"$//')	# 把val首尾的引号切掉
+	echo $val_without_quote
+}
+
+### 执行go cmd
+function goCmd()
+{
+	local go_cmd=$1
+	log "INFO" "Run '''`echo_color $CL_YELLOW $go_cmd`''' started..."
+	eval $go_cmd 2>&1 | tee -a $OUTPUT_PATH
+	local ret=${PIPESTATUS[0]}
+	if [ $ret -ne 0 ]; then
+		log "ERROR" "Run '''`echo_color $CL_YELLOW $go_cmd`''' failed."
+	else
+		log "INFO" "Run '''`echo_color $CL_YELLOW $go_cmd`''' completed."
+	fi
+	return $ret
+}
+
+### 根据config进行编译
+function buildAll()
+{
+	local conf_param=$1
+
+	# 从config.ini中加载templ文件
+	local conf_templ=`readIni $PROJ_CONF_PATH $conf_param "templ"`
+	if [ -z "$conf_templ" ]; then
+		log "FATAL" "Config templ missed,param='''`echo_color $CL_YELLOW $conf_param`'''"
+	elif [ ! -f "$PROJ_CONF_DIR/$conf_templ" ]; then
+		log "FATAL" "Load config failed,file='''`echo_color $CL_YELLOW $PROJ_CONF_DIR/$conf_templ`'''"
+	fi
+
+	# 从config.ini中获取要编译的目标
+	local templ_target=`readIni $PROJ_CONF_PATH $conf_param "target"`
+	if [ -z $templ_target ]; then
+		log "FATAL" "Templ target missed,file='''`echo_color $CL_YELLOW $PROJ_CONF_DIR/$conf_templ`'''"
+	fi
+
+	log "INFO" "Prepared to build all...(config from '''`echo_color $CL_YELLOW $PROJ_CONF_DIR/$conf_templ`''')"
+	# 以逗号为分隔符分割成数组
+	local target_array=(${templ_target//,/ })
+
+	# 根据templ文件中的配置完成go_cmd字符串
+	local err_count=0
+	for target in ${target_array[@]}
+	do
+		local templ_target=`readIni "$PROJ_CONF_DIR/$conf_templ" $target "output"`
+		local templ_build_mode=`readIni "$PROJ_CONF_DIR/$conf_templ" $target "build_mode"`
+		local templ_build_opt=`readIni "$PROJ_CONF_DIR/$conf_templ" $target "build_opt"`
+		local go_cmd="go build -o $GOBIN/$templ_target $templ_build_mode $templ_build_opt $target"
+		goCmd "$go_cmd"
+		if [ $? -ne 0 ]; then
+			err_count=$[$err_count+1]
+		fi
+	done
+
+	if [ $err_count -ne 0 ]; then
+		log "ERROR" "Building all '''`echo_color $CL_YELLOW $conf_param`''' failed,error count:$err_count."
+	else
+		log "INFO" "Building all '''`echo_color $CL_YELLOW $conf_param`''' completed."
+	fi
+	return $err_count
+}
